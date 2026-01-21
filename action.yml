@@ -1,13 +1,9 @@
-name: "Commit Linter"
+name: "Fast Commit Linter"
 description: "Lightning-fast, dependency-free PR title and commit message linter for Conventional Commits."
 author: "HarryVasanth"
 branding:
   icon: "check-circle"
   color: "blue"
-
-categories:
-  - Utilities
-  - Code quality
 
 inputs:
   pr_title:
