@@ -1,0 +1,28 @@
+name: "🧪 Tests"
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: "🧪 ${{ matrix.os }}"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: "🐧 Check out repository code"
+        uses: actions/checkout@v7
+
+      - name: "🔍 ShellCheck"
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y shellcheck
+          shellcheck lint-commits.sh lint-commits.test.sh
+
+      - name: "✅ Run self-check"
+        run: ./lint-commits.test.sh
