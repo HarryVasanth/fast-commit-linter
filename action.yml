@@ -7,97 +7,122 @@ branding:
 
 inputs:
   pr_title:
-    description: "PR title to validate. Defaults to the event PR title."
+    description: "🔖 PR title to validate. Defaults to the event PR title."
     required: false
     default: ${{ github.event.pull_request.title }}
+  check_pr_title:
+    description: "🔖 Check the PR title (true/false). Set to false to lint commits only."
+    required: false
+    default: "true"
   commit_messages:
-    description: "Newline-separated commit subjects to validate. Overrides base_sha/head_sha."
+    description: "📝 Newline-separated commit subjects to validate. Overrides base_sha/head_sha."
     required: false
   allowed_types:
-    description: "Comma-separated list of allowed conventional commit types."
+    description: "🏷️ Comma-separated list of allowed conventional commit types."
     required: false
     default: "feat,fix,docs,style,refactor,perf,test,build,ci,chore,revert"
   scopes:
-    description: "Optional comma-separated scope allowlist. Empty allows any scope."
+    description: "🔍 Optional comma-separated scope allowlist. Empty allows any scope."
     required: false
   require_scope:
-    description: "Require a scope on every message."
+    description: "🔒 Require a scope on every message."
     required: false
     default: "false"
+  description_case:
+    description: "🔠 Required first-letter case of the description: any, lower or upper."
+    required: false
+    default: "any"
   custom_regex:
-    description: "Completely override the validation regex (POSIX extended regex)."
+    description: "🧪 Completely override the validation regex (POSIX extended regex)."
     required: false
   ignore_regex:
-    description: "Commit subjects matching this regex are skipped. Set to an empty string to check every commit."
+    description: "⏭️ Subjects and PR titles matching this regex are skipped. Set to an empty string to check everything."
     required: false
     default: '^(Merge |Revert "|fixup! |squash! |amend! )'
   ignore_bots:
-    description: "Skip validation for automated accounts (dependabot, renovate, github-actions, *[bot])."
+    description: "🤖 Skip validation for automated accounts (dependabot, renovate, github-actions, *[bot])."
     required: false
     default: "true"
   github_actor:
-    description: "The GitHub actor, used for bot detection."
+    description: "🙋 The GitHub actor, used for bot detection."
     required: false
     default: ${{ github.actor }}
   skip_labels:
-    description: "Comma-separated labels that skip validation entirely (e.g. skip-lint)."
+    description: "🏷️ Comma-separated labels that skip validation entirely (e.g. skip-lint)."
     required: false
+  ignore_branches:
+    description: "🌿 Comma-separated branch globs that skip validation (e.g. release/*,dependabot/*)."
+    required: false
+  branch:
+    description: "🌿 Branch name used by ignore_branches. Defaults to the PR head branch."
+    required: false
+    default: ${{ github.head_ref || github.ref_name }}
   assignees:
-    description: "Comma-separated PR assignees. Defaults from the event payload, no token needed."
+    description: "👥 Comma-separated PR assignees. Defaults from the event payload, no token needed."
     required: false
     default: ${{ join(github.event.pull_request.assignees.*.login, ',') }}
   require_assignees:
-    description: "Fail when the PR has no assignee."
+    description: "🙋 Fail when the PR has no assignee."
     required: false
     default: "false"
   labels:
-    description: "Comma-separated PR labels. Defaults from the event payload, no token needed."
+    description: "🏷️ Comma-separated PR labels. Defaults from the event payload, no token needed."
     required: false
     default: ${{ join(github.event.pull_request.labels.*.name, ',') }}
   require_labels:
-    description: "Fail when the PR has no label."
+    description: "🏷️ Fail when the PR has no label."
     required: false
     default: "false"
   is_draft:
-    description: "Whether the PR is a draft. Defaults from the event payload."
+    description: "📄 Whether the PR is a draft. Defaults from the event payload."
     required: false
     default: ${{ github.event.pull_request.draft }}
   ignore_drafts:
-    description: "Skip validation for draft PRs."
+    description: "📄 Skip validation for draft PRs."
     required: false
     default: "false"
   base_sha:
-    description: "Base commit SHA. Set with head_sha to lint every commit in the range. Requires fetch-depth: 0."
+    description: "🌱 Base commit SHA. Set with head_sha to lint every commit in the range. Requires fetch-depth: 0."
     required: false
   head_sha:
-    description: "Head commit SHA. Set with base_sha to lint every commit in the range. Requires fetch-depth: 0."
+    description: "🌱 Head commit SHA. Set with base_sha to lint every commit in the range. Requires fetch-depth: 0."
     required: false
   max_subject_length:
-    description: "Maximum subject length in characters. 0 disables the check."
+    description: "📏 Maximum subject length in characters. 0 disables the check."
     required: false
     default: "0"
+  allow_empty:
+    description: "🕳️ Pass with skipped=true when there is nothing to lint (true/false)."
+    required: false
+    default: "false"
 
 outputs:
+  result:
+    description: "📊 Outcome: passed, failed or skipped."
+    value: ${{ steps.lint.outputs.result }}
   failed:
-    description: "true when any message or required metadata check failed."
+    description: "❌ true when any message or required metadata check failed."
     value: ${{ steps.lint.outputs.failed }}
   skipped:
-    description: "true when the whole run was skipped (bot, draft or skip label)."
+    description: "⏭️ true when the whole run was skipped (bot, draft, branch, label or empty input)."
     value: ${{ steps.lint.outputs.skipped }}
   skip_reason:
-    description: "Why the run was skipped."
+    description: "⏭️ Why the run was skipped."
     value: ${{ steps.lint.outputs.skip_reason }}
   valid_count:
-    description: "Number of messages that passed."
+    description: "✅ Number of messages that passed."
     value: ${{ steps.lint.outputs.valid_count }}
   invalid_count:
-    description: "Number of messages that failed."
+    description: "❌ Number of messages that failed."
     value: ${{ steps.lint.outputs.invalid_count }}
   skipped_count:
-    description: "Number of commit messages skipped by ignore_regex."
+    description: "⏭️ Number of messages skipped by ignore_regex."
     value: ${{ steps.lint.outputs.skipped_count }}
+  checked_count:
+    description: "🔢 Number of messages checked (valid + invalid)."
+    value: ${{ steps.lint.outputs.checked_count }}
   invalid_messages:
-    description: "Newline-separated invalid messages."
+    description: "📝 Newline-separated invalid messages."
     value: ${{ steps.lint.outputs.invalid_messages }}
 
 runs:
@@ -106,17 +131,28 @@ runs:
     - name: "🔎 Lint PR title, commits and metadata"
       id: lint
       shell: bash
+      # Cygpath makes the script path valid in Git Bash on Windows.
+      run: |
+        action_path="${{ github.action_path }}"
+        if command -v cygpath >/dev/null 2>&1; then
+          action_path=$(cygpath -u "$action_path")
+        fi
+        bash "$action_path/lint-commits.sh"
       env:
         INPUT_PR_TITLE: ${{ inputs.pr_title }}
+        INPUT_CHECK_PR_TITLE: ${{ inputs.check_pr_title }}
         INPUT_COMMIT_MESSAGES: ${{ inputs.commit_messages }}
         INPUT_ALLOWED_TYPES: ${{ inputs.allowed_types }}
         INPUT_SCOPES: ${{ inputs.scopes }}
         INPUT_REQUIRE_SCOPE: ${{ inputs.require_scope }}
+        INPUT_DESCRIPTION_CASE: ${{ inputs.description_case }}
         INPUT_CUSTOM_REGEX: ${{ inputs.custom_regex }}
         INPUT_IGNORE_REGEX: ${{ inputs.ignore_regex }}
         INPUT_IGNORE_BOTS: ${{ inputs.ignore_bots }}
         INPUT_GITHUB_ACTOR: ${{ inputs.github_actor }}
         INPUT_SKIP_LABELS: ${{ inputs.skip_labels }}
+        INPUT_IGNORE_BRANCHES: ${{ inputs.ignore_branches }}
+        INPUT_BRANCH: ${{ inputs.branch }}
         INPUT_ASSIGNEES: ${{ inputs.assignees }}
         INPUT_REQUIRE_ASSIGNEES: ${{ inputs.require_assignees }}
         INPUT_LABELS: ${{ inputs.labels }}
@@ -126,4 +162,4 @@ runs:
         INPUT_BASE_SHA: ${{ inputs.base_sha }}
         INPUT_HEAD_SHA: ${{ inputs.head_sha }}
         INPUT_MAX_SUBJECT_LENGTH: ${{ inputs.max_subject_length }}
-      run: bash "${{ github.action_path }}/lint-commits.sh"
+        INPUT_ALLOW_EMPTY: ${{ inputs.allow_empty }}

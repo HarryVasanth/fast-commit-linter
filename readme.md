@@ -11,6 +11,8 @@ GitHub-hosted and self-hosted runners.
 - ⚡️ **Instant.** A composite action with native bash regex matching. No `npm install`, no image pull.
 - 🧩 **One action, three checks.** PR title, every commit in the range, and required assignee/label.
 - 🤖 **Bot and draft aware.** Dependabot, Renovate, `[bot]` accounts and drafts can be skipped.
+- 🌿 **Branch aware.** Skip release or bot branches with comma-separated globs such as `release/*,dependabot/*`.
+- 🔠 **Style rules.** Optional description case and subject length. Emoji are counted as characters, not bytes.
 - 💥 **Breaking changes.** Supports `feat(api)!: drop v1`, which most hand-written regexes miss.
 - 🔍 **Real feedback.** Each failure says why it failed and what was expected.
 - 📊 **Step summary.** A Markdown table of invalid messages, plus outputs for later steps.
@@ -58,15 +60,19 @@ instead:
 | Input | Description | Default |
 | --- | --- | --- |
 | `pr_title` | 🔖 PR title to validate | the event PR title |
+| `check_pr_title` | 🔖 Check the PR title | `true` |
 | `commit_messages` | 📝 Newline-separated subjects. Overrides `base_sha`/`head_sha` | none |
 | `allowed_types` | 🏷️ Comma-separated commit types | `feat,fix,docs,style,refactor,perf,test,build,ci,chore,revert` |
 | `scopes` | 🔍 Comma-separated scope allowlist. Empty allows any scope | none |
 | `require_scope` | 🔒 Require a scope on every message | `false` |
+| `description_case` | 🔠 Description first-letter case: `any`, `lower` or `upper` | `any` |
 | `custom_regex` | 🧪 Full POSIX ERE override for the message check | none |
-| `ignore_regex` | ⏭️ Subjects matching this ERE are skipped. Empty checks all | merge, revert, fixup, squash, amend |
+| `ignore_regex` | ⏭️ Subjects and PR titles matching this ERE are skipped. Empty checks all | merge, revert, fixup, squash, amend |
 | `ignore_bots` | 🤖 Skip dependabot, renovate, github-actions and `*[bot]` | `true` |
 | `github_actor` | 🙋 Actor used for bot detection | the event actor |
 | `skip_labels` | 🏷️ Comma-separated labels that skip the whole run | none |
+| `ignore_branches` | 🌿 Comma-separated branch globs that skip the whole run | none |
+| `branch` | 🌿 Branch name used by `ignore_branches` | the PR head branch |
 | `assignees` | 👥 Comma-separated assignees | the event assignees |
 | `require_assignees` | 🙋 Fail when the PR has no assignee | `false` |
 | `labels` | 🏷️ Comma-separated labels | the event labels |
@@ -76,6 +82,7 @@ instead:
 | `base_sha` | 🌱 Base commit. Set with `head_sha` to check the range | none |
 | `head_sha` | 🌱 Head commit. Set with `base_sha` to check the range | none |
 | `max_subject_length` | 📏 Max subject characters. `0` disables | `0` |
+| `allow_empty` | 🕳️ Pass with `skipped=true` when there is nothing to lint | `false` |
 
 `assignees` and `labels` read the event payload. No GitHub token or API call is
 made, so the action also works on fork PRs with a read-only token.
@@ -84,12 +91,14 @@ made, so the action also works on fork PRs with a read-only token.
 
 | Output | Description |
 | --- | --- |
+| `result` | 📊 `passed`, `failed` or `skipped` |
 | `failed` | `true` when any message or required metadata check failed |
-| `skipped` | `true` when the whole run was skipped (bot, draft or skip label) |
+| `skipped` | `true` when the whole run was skipped (bot, draft, branch, label or empty input) |
 | `skip_reason` | Why the run was skipped |
 | `valid_count` | Number of messages that passed |
 | `invalid_count` | Number of messages that failed |
-| `skipped_count` | Number of commits skipped by `ignore_regex` |
+| `skipped_count` | Number of messages skipped by `ignore_regex` |
+| `checked_count` | Number of messages checked (`valid_count` + `invalid_count`) |
 | `invalid_messages` | Newline-separated invalid messages |
 
 ```yaml
@@ -124,12 +133,38 @@ The rules:
 - 🔍 A scope is optional and may contain letters, digits, `_`, `.`, `/` and `-`.
 - 💥 `!` may appear before the colon to mark a breaking change.
 - `: ` needs exactly one space, and the description cannot start or end with whitespace.
-- 📏 `max_subject_length` is opt-in. Emoji count as one character.
+- 🔠 `description_case` can require a lowercase or uppercase first ASCII letter. Non-letters,
+  emoji and non-ASCII letters pass.
+- 📏 `max_subject_length` is opt-in. Emoji are counted as characters, not bytes.
 - ⏭️ Merge commits, `Revert "..."`, `fixup!`, `squash!` and `amend!` are skipped by default, so a
   merge does not fail the lint. Set `ignore_regex: ""` to check them.
+- 🔖 `ignore_regex` also applies to the PR title. A `Revert "..."` release PR passes.
+- 🙈 Set `check_pr_title: "false"` to lint commits only.
 
 Nothing to lint is an error. If the PR title is empty and no commits are
-collected, the action fails instead of passing silently.
+collected, the action fails instead of passing silently. Set `allow_empty: "true"`
+to pass with `skipped=true` instead.
+
+## 🌿 Skipping a run
+
+The whole run is skipped when any of these match. The order is draft, branch,
+bot, then skip label.
+
+```yaml
+- uses: HarryVasanth/fast-commit-linter@v1
+  with:
+    skip_labels: "skip-lint,no-commit-check"
+    ignore_branches: "release/*,dependabot/*"
+```
+
+- 📄 `ignore_drafts` with a draft PR.
+- 🌿 `ignore_branches` with a branch glob. Matching is case-sensitive and `*`, `?`
+  and `[...]` work.
+- 🤖 `ignore_bots` with `dependabot`, `renovate`, `github-actions`, a `[bot]`
+  suffix or `copilot`.
+- 🏷️ `skip_labels` with any label, matched case-insensitively.
+
+A skipped run exits 0 and sets `skipped=true`, `result=skipped` and `skip_reason`.
 
 ## 🏛️ One-step PR compliance
 
@@ -198,7 +233,7 @@ For example, `scopes: "api,ui,db"` rejects `feat(internal): ...`.
 ::notice::✅ Skipping lint: automated account (dependabot[bot])
 ```
 
-The step passes, `skipped=true`, and `skip_reason` explains why.
+The step passes with `result=skipped`, `skipped=true`, and `skip_reason` explaining why.
 
 ### 🙋 Required metadata
 
@@ -211,15 +246,16 @@ The step passes, `skipped=true`, and `skip_reason` explains why.
 ❌ Validation failed: 1 issue(s)
 ```
 
-### 🏷️ Skip a PR with a label
+### 🏷️ Skip a PR with a label or branch
 
 ```yaml
 - uses: HarryVasanth/fast-commit-linter@v1
   with:
     skip_labels: "skip-lint,no-commit-check"
+    ignore_branches: "release/*"
 ```
 
-Label matching is case-insensitive.
+Label matching is case-insensitive. Branch globs are case-sensitive.
 
 ## 🧰 Local use
 
@@ -234,9 +270,14 @@ INPUT_COMMIT_MESSAGES=$'fix: crash\nchore: bump deps' ./lint-commits.sh
 INPUT_ALLOWED_TYPES="feat,fix,wip" \
 INPUT_PR_TITLE="wip(ui): draft" \
 ./lint-commits.sh
+
+INPUT_DESCRIPTION_CASE=lower \
+INPUT_IGNORE_BRANCHES="release/*" \
+INPUT_BRANCH="release/2.0" \
+./lint-commits.sh
 ```
 
-Run the self-check (54 cases, bash 3.2 compatible):
+Run the self-check (86 cases, bash 3.2 compatible):
 
 ```bash
 ./lint-commits.test.sh
@@ -245,13 +286,18 @@ Run the self-check (54 cases, bash 3.2 compatible):
 ## ⚠️ Limits
 
 - 📝 `commit_messages` is one subject per line. Bodies and footers are not parsed. Set
-  `base_sha`/`head_sha` to let git collect the subjects.
+  `base_sha`/`head_sha` to let git collect the subjects. A blank list falls back to the range.
 - 🌱 Commit collection needs `fetch-depth: 0` (or enough history) for the base commit.
   A missing SHA fails with a clear message.
 - 🔎 GitHub shows at most 10 `::error::` annotations per step. Every invalid message is
   still printed to the log and the summary.
-- 🧾 The step summary lists up to 50 invalid messages. The log always lists all of them.
-- 🧪 `custom_regex` replaces the format check only. `max_subject_length` still applies.
+- 🧾 The step summary lists up to 50 invalid and 50 skipped messages. The log lists all of them.
+- 🧪 `custom_regex` replaces the format check only. `max_subject_length` and
+  `description_case` still apply. `scopes` and `require_scope` are ignored with a warning.
+- 🔠 `description_case` compares the first character after `: `. With a `custom_regex` that
+  has no `: ` delimiter, the case check is skipped.
+- 🌿 `ignore_branches` matches the `branch` input, not the full `refs/heads/...` name.
+- ⏭️ `skipped_count` counts every message skipped by `ignore_regex`, including the PR title.
 
 ## 🔐 Security
 

@@ -3,11 +3,16 @@ name: "🧪 Tests"
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  test:
-    name: "🧪 ${{ matrix.os }}"
+  unit:
+    name: "🧪 Unit · ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -25,4 +30,77 @@ jobs:
           shellcheck lint-commits.sh lint-commits.test.sh
 
       - name: "✅ Run self-check"
-        run: ./lint-commits.test.sh
+        run: bash ./lint-commits.test.sh
+
+  action:
+    name: "🎯 Action · ${{ matrix.os }}"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: "🐧 Check out repository code"
+        uses: actions/checkout@v7
+
+      - name: "✅ Valid input"
+        id: valid
+        uses: ./
+        with:
+          pr_title: "feat(api): add login"
+          commit_messages: |
+            fix: crash on empty input
+            Merge branch 'main'
+
+      - name: "🧪 Check valid output"
+        shell: bash
+        run: |
+          test "${{ steps.valid.outputs.result }}" = "passed"
+          test "${{ steps.valid.outputs.failed }}" = "false"
+          test "${{ steps.valid.outputs.checked_count }}" = "2"
+          test "${{ steps.valid.outputs.valid_count }}" = "2"
+          test "${{ steps.valid.outputs.skipped_count }}" = "1"
+
+      - name: "❌ Invalid input"
+        id: invalid
+        continue-on-error: true
+        uses: ./
+        with:
+          pr_title: "Added login"
+
+      - name: "🧪 Check invalid output"
+        shell: bash
+        run: |
+          test "${{ steps.invalid.outcome }}" = "failure"
+          test "${{ steps.invalid.outputs.result }}" = "failed"
+          test "${{ steps.invalid.outputs.invalid_count }}" = "1"
+          test "${{ steps.invalid.outputs.checked_count }}" = "1"
+
+      - name: "🌿 Skipped branch"
+        id: branch
+        uses: ./
+        with:
+          pr_title: "Bad title"
+          branch: "release/2.0"
+          ignore_branches: "release/*,dependabot/*"
+
+      - name: "🧪 Check skip output"
+        shell: bash
+        run: |
+          test "${{ steps.branch.outputs.result }}" = "skipped"
+          test "${{ steps.branch.outputs.skipped }}" = "true"
+          test "${{ steps.branch.outputs.skip_reason }}" = "branch 'release/2.0' matches 'release/*'"
+
+      - name: "🔠 Description case"
+        id: case
+        continue-on-error: true
+        uses: ./
+        with:
+          pr_title: "feat: Add login"
+          description_case: "lower"
+
+      - name: "🧪 Check description case output"
+        shell: bash
+        run: test "${{ steps.case.outcome }}" = "failure"

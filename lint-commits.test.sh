@@ -68,21 +68,48 @@ run 0 "" "scope required, present" 'INPUT_REQUIRE_SCOPE=true' 'INPUT_PR_TITLE=fe
 run 0 "" "subject at max length" 'INPUT_MAX_SUBJECT_LENGTH=10' 'INPUT_PR_TITLE=feat: abcd'
 run 1 "" "subject over max length" 'INPUT_MAX_SUBJECT_LENGTH=10' 'INPUT_PR_TITLE=feat: abcde'
 run 1 "must be a non-negative integer" "bad length input" 'INPUT_MAX_SUBJECT_LENGTH=-1' 'INPUT_PR_TITLE=feat: x'
+run 1 "999999999 or less" "overflowing length input" 'INPUT_MAX_SUBJECT_LENGTH=1234567890' 'INPUT_PR_TITLE=feat: x'
 run 0 "" "custom regex match" 'INPUT_CUSTOM_REGEX=^[A-Z]+: .+' 'INPUT_PR_TITLE=ABC: x'
 run 1 "" "custom regex miss" 'INPUT_CUSTOM_REGEX=^[A-Z]+: .+' 'INPUT_PR_TITLE=abc: x'
 run 1 "not a valid extended regex" "invalid custom regex" 'INPUT_CUSTOM_REGEX=([a-z' 'INPUT_PR_TITLE=feat: x'
+run 0 "ignored when custom_regex" "scopes warn with custom regex" 'INPUT_CUSTOM_REGEX=^[A-Z]+: .+' 'INPUT_SCOPES=api' 'INPUT_PR_TITLE=ABC: x'
+
+# --- 🔠 Description case ----------------------------------------------------
+
+run 0 "" "lowercase description" 'INPUT_DESCRIPTION_CASE=lower' 'INPUT_PR_TITLE=feat: add login'
+run 1 "" "uppercase description rejected" 'INPUT_DESCRIPTION_CASE=lower' 'INPUT_PR_TITLE=feat: Add login'
+run 0 "" "uppercase description allowed" 'INPUT_DESCRIPTION_CASE=upper' 'INPUT_PR_TITLE=feat: Add login'
+run 1 "" "lowercase description rejected" 'INPUT_DESCRIPTION_CASE=upper' 'INPUT_PR_TITLE=feat: add login'
+run 0 "" "emoji description passes lower" 'INPUT_DESCRIPTION_CASE=lower' 'INPUT_PR_TITLE=feat: 🎉 add party'
+run 0 "" "non-ASCII description passes lower" 'INPUT_DESCRIPTION_CASE=lower' 'INPUT_PR_TITLE=feat: Éclair'
+run 0 "" "emoji length counts characters" 'INPUT_MAX_SUBJECT_LENGTH=9' 'INPUT_PR_TITLE=feat: 🎉 x'
+run 1 "" "emoji length over the limit" 'INPUT_MAX_SUBJECT_LENGTH=8' 'INPUT_PR_TITLE=feat: 🎉 x'
+run 0 "" "description case ignores custom regex without a colon" 'INPUT_CUSTOM_REGEX=^[A-Z]+ .+' 'INPUT_DESCRIPTION_CASE=lower' 'INPUT_PR_TITLE=ABC Def'
+run 1 "description_case must be" "bad description case" 'INPUT_DESCRIPTION_CASE=sideways' 'INPUT_PR_TITLE=feat: x'
 
 # --- 📝 Commit messages -----------------------------------------------------
 
 run 0 "" "valid commit list" $'INPUT_COMMIT_MESSAGES=fix: a\nchore: b'
 run 1 "" "invalid commit list" $'INPUT_COMMIT_MESSAGES=fix: a\nupdate stuff'
 run 0 "" "CRLF commit list" $'INPUT_COMMIT_MESSAGES=fix: a\r\nchore: b\r'
+run 0 "" "title uses only the first line" $'INPUT_PR_TITLE=feat: x\nBad body line'
+run 1 "not a valid extended regex" "invalid ignore regex" 'INPUT_IGNORE_REGEX=([a-z' 'INPUT_PR_TITLE=feat: x'
 run 0 "" "merge commit ignored" 'INPUT_COMMIT_MESSAGES=Merge branch main'
 run 0 "" "revert commit ignored" 'INPUT_COMMIT_MESSAGES=Revert "feat: x"'
 run 1 "" "merge commit checked when ignore off" 'INPUT_IGNORE_REGEX=' 'INPUT_COMMIT_MESSAGES=Merge branch main'
 run 0 "" "empty commit list with title" 'INPUT_COMMIT_MESSAGES=' 'INPUT_PR_TITLE=feat: x'
 run 0 "" "zero-one-edu types" 'INPUT_ALLOWED_TYPES=add,delete,update,fix,bump,security,refactor,style,test,docs,chore,perf,ci,build,revert' 'INPUT_PR_TITLE=add(api): thing'
 run 1 "nothing to lint" "no input at all"
+
+# --- 🔖 PR title handling ---------------------------------------------------
+
+run 0 "" "revert title skipped by ignore_regex" 'INPUT_PR_TITLE=Revert "feat: x"'
+run 1 "" "revert title checked when ignore off" 'INPUT_IGNORE_REGEX=' 'INPUT_PR_TITLE=Revert "feat: x"'
+run 0 "" "title check disabled" 'INPUT_CHECK_PR_TITLE=false' 'INPUT_COMMIT_MESSAGES=fix: a'
+run 0 "" "invalid title ignored when disabled" 'INPUT_CHECK_PR_TITLE=false' 'INPUT_COMMIT_MESSAGES=fix: a' 'INPUT_PR_TITLE=Bad title'
+run 1 "nothing to lint" "title disabled with no commits" 'INPUT_CHECK_PR_TITLE=false'
+run 0 "allow_empty" "allow empty input" 'INPUT_ALLOW_EMPTY=true'
+run 1 "nothing to lint" "allow_empty off by default"
 
 # --- ⏭️ Skips ---------------------------------------------------------------
 
@@ -93,6 +120,11 @@ run 1 "" "skip label absent" 'INPUT_LABELS=bug' 'INPUT_SKIP_LABELS=skip-lint' 'I
 run 0 "" "comma-only skip labels" 'INPUT_SKIP_LABELS=,' 'INPUT_PR_TITLE=feat: x'
 run 0 "" "draft skipped" 'INPUT_IGNORE_DRAFTS=true' 'INPUT_IS_DRAFT=true' 'INPUT_PR_TITLE=Bad title'
 run 1 "" "draft checked when not ignored" 'INPUT_IS_DRAFT=true' 'INPUT_PR_TITLE=Bad title'
+run 0 "" "release branch skipped" 'INPUT_BRANCH=release/1.2' 'INPUT_IGNORE_BRANCHES=release/*' 'INPUT_PR_TITLE=Bad title'
+run 0 "" "bot branch skipped from a list" 'INPUT_BRANCH=dependabot/npm/x' 'INPUT_IGNORE_BRANCHES=release/*,dependabot/*' 'INPUT_PR_TITLE=Bad title'
+run 1 "" "branch not in list is checked" 'INPUT_BRANCH=main' 'INPUT_IGNORE_BRANCHES=release/*' 'INPUT_PR_TITLE=Bad title'
+run 1 "" "empty branch never matches" 'INPUT_BRANCH=' 'INPUT_IGNORE_BRANCHES=*' 'INPUT_PR_TITLE=Bad title'
+run 1 "" "comma-only branch list never skips" 'INPUT_BRANCH=main' 'INPUT_IGNORE_BRANCHES=, ,' 'INPUT_PR_TITLE=Bad title'
 
 # --- 🙋 Required metadata ---------------------------------------------------
 
@@ -138,6 +170,24 @@ else
 	fail "base_sha without head_sha fails" "exit $CODE"
 fi
 
+OUT=$(cd "$repo" && env -i PATH="$PATH" HOME="${HOME:-}" \
+	INPUT_COMMIT_MESSAGES='   ' INPUT_BASE_SHA="$base" INPUT_HEAD_SHA="$head" "$SCRIPT" 2>&1)
+CODE=$?
+if [ "$CODE" -eq 1 ]; then
+	pass "blank commit list falls back to the range"
+else
+	fail "blank commit list falls back to the range" "exit $CODE"
+fi
+
+OUT=$(cd "$repo" && env -i PATH="$PATH" HOME="${HOME:-}" \
+	INPUT_COMMIT_MESSAGES='fix: ok' INPUT_BASE_SHA="$base" "$SCRIPT" 2>&1)
+CODE=$?
+if [ "$CODE" -eq 1 ] && [[ $OUT == *"must be set together"* ]]; then
+	pass "half a range fails even with commit_messages"
+else
+	fail "half a range fails even with commit_messages" "exit $CODE"
+fi
+
 # --- 📤 Outputs and summary -------------------------------------------------
 
 outfile="$TMP/outputs"
@@ -150,10 +200,42 @@ if grep -q '^failed=true$' "$outfile" && grep -q '^invalid_count=1$' "$outfile";
 else
 	fail "writes failed and invalid_count outputs" "outputs: $(cat "$outfile")"
 fi
+if grep -q '^result=failed$' "$outfile" && grep -q '^checked_count=1$' "$outfile"; then
+	pass "writes result and checked_count outputs"
+else
+	fail "writes result and checked_count outputs" "outputs: $(cat "$outfile")"
+fi
 if grep -q 'bad title' "$sumfile"; then
 	pass "writes invalid message to step summary"
 else
 	fail "writes invalid message to step summary" "summary: $(cat "$sumfile")"
+fi
+
+skipped_out="$TMP/skipped-outputs"
+env -i PATH="$PATH" HOME="${HOME:-}" GITHUB_OUTPUT="$skipped_out" \
+	INPUT_PR_TITLE='Revert "feat: x"' "$SCRIPT" >/dev/null 2>&1 || true
+if grep -q '^result=passed$' "$skipped_out" && grep -q '^skipped_count=1$' "$skipped_out"; then
+	pass "title skip is counted"
+else
+	fail "title skip is counted" "outputs: $(cat "$skipped_out")"
+fi
+
+skip_sum="$TMP/skip-summary"
+env -i PATH="$PATH" HOME="${HOME:-}" GITHUB_STEP_SUMMARY="$skip_sum" \
+	INPUT_PR_TITLE='Revert "feat: x"' "$SCRIPT" >/dev/null 2>&1 || true
+if grep -q 'Skipped message' "$skip_sum"; then
+	pass "writes skipped messages to step summary"
+else
+	fail "writes skipped messages to step summary" "summary: $(cat "$skip_sum")"
+fi
+
+empty_out="$TMP/empty-outputs"
+env -i PATH="$PATH" HOME="${HOME:-}" GITHUB_OUTPUT="$empty_out" \
+	INPUT_ALLOW_EMPTY=true "$SCRIPT" >/dev/null 2>&1 || true
+if grep -q '^result=skipped$' "$empty_out" && grep -q '^skip_reason=' "$empty_out"; then
+	pass "allow_empty writes a skipped result"
+else
+	fail "allow_empty writes a skipped result" "outputs: $(cat "$empty_out")"
 fi
 
 # --- 🏁 Result --------------------------------------------------------------

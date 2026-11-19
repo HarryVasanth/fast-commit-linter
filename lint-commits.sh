@@ -7,12 +7,21 @@
 
 set -euo pipefail
 
+# Count characters, not bytes, so emoji and accents are not penalised.
+# bash 3.2 only counts characters when the locale is UTF-8.
+probe='🎉'
+for loc in C.UTF-8 en_US.UTF-8; do
+	LC_ALL=$loc
+	if [ "${#probe}" -eq 1 ]; then break; fi
+done
+export LC_ALL
+
 # --- 🧾 Output helpers -------------------------------------------------------
 
 error() { echo "::error::❌ $*" >&2; exit 1; }
 warn() { echo "::warning::⚠️ $*"; }
 notice() { echo "::notice::✅ $*"; }
-debug() { [ "${RUNNER_DEBUG:-}" = "1" ] && echo "::debug::$*" || true; }
+debug() { if [ "${RUNNER_DEBUG:-}" = "1" ]; then echo "::debug::$*"; fi; }
 
 # Escape data for a workflow command. Keep the message on one line.
 gh_escape() {
@@ -35,7 +44,7 @@ write_output() {
 # Write one multiline output. Use a random delimiter to keep the value intact.
 write_multiline_output() {
 	local delimiter
-	delimiter="EOF_$(date +%s)_$RANDOM"
+	delimiter="EOF_$(date +%s)_${RANDOM}${RANDOM}${RANDOM}"
 	if [ -n "${GITHUB_OUTPUT:-}" ]; then
 		{
 			printf '%s<<%s\n' "$1" "$delimiter"
@@ -73,6 +82,7 @@ num() {
 	fi
 	raw=$(trim "$raw")
 	is_uint "$raw" || error "$1 must be a non-negative integer"
+	[ ${#raw} -le 9 ] || error "$1 must be 999999999 or less"
 	NUM=$((10#$raw))
 	if [ "$NUM" -lt "$min" ]; then
 		error "$1 must be at least $min"
@@ -191,11 +201,18 @@ fi
 CUSTOM_REGEX=$(trim "${INPUT_CUSTOM_REGEX:-}")
 SCOPES=$(trim "${INPUT_SCOPES:-}")
 SKIP_LABELS=$(trim "${INPUT_SKIP_LABELS:-}")
+BRANCH=$(trim "${INPUT_BRANCH:-}")
+IGNORE_BRANCHES=$(trim "${INPUT_IGNORE_BRANCHES:-}")
 ASSIGNEES=$(trim "${INPUT_ASSIGNEES:-}")
 LABELS=$(trim "${INPUT_LABELS:-}")
 ACTOR=$(trim "${INPUT_GITHUB_ACTOR:-}")
 BASE_SHA=$(trim "${INPUT_BASE_SHA:-}")
 HEAD_SHA=$(trim "${INPUT_HEAD_SHA:-}")
+DESCRIPTION_CASE=$(lower "${INPUT_DESCRIPTION_CASE:-any}")
+case $DESCRIPTION_CASE in
+any | lower | upper) ;;
+*) error "description_case must be any, lower or upper" ;;
+esac
 
 # An empty ignore_regex disables the skips. An unset one gets the defaults.
 if [ -z "${INPUT_IGNORE_REGEX+x}" ]; then
@@ -216,9 +233,21 @@ bool ignore_drafts "${INPUT_IGNORE_DRAFTS:-false}"
 IGNORE_DRAFTS=$BOOL
 bool is_draft "${INPUT_IS_DRAFT:-false}"
 IS_DRAFT=$BOOL
+bool check_pr_title "${INPUT_CHECK_PR_TITLE:-true}"
+CHECK_PR_TITLE=$BOOL
+bool allow_empty "${INPUT_ALLOW_EMPTY:-false}"
+ALLOW_EMPTY=$BOOL
 
 num max_subject_length "${INPUT_MAX_SUBJECT_LENGTH:-}" 0 0
 MAX_SUBJECT_LENGTH=$NUM
+if [ "$MAX_SUBJECT_LENGTH" -gt 0 ] && [ "${#probe}" -ne 1 ]; then
+	warn "no UTF-8 locale found: max_subject_length counts bytes, not characters"
+fi
+
+# A half-set commit range is a config error, even when commit_messages is used.
+if { [ -n "$BASE_SHA" ] && [ -z "$HEAD_SHA" ]; } || { [ -z "$BASE_SHA" ] && [ -n "$HEAD_SHA" ]; }; then
+	error "base_sha and head_sha must be set together"
+fi
 
 # --- 🧩 Pattern -------------------------------------------------------------
 
@@ -268,6 +297,10 @@ if [ -n "$IGNORE_REGEX" ]; then
 	check_regex ignore_regex "$IGNORE_REGEX"
 fi
 
+if [ -n "$CUSTOM_REGEX" ] && { [ -n "$SCOPES" ] || [ "$REQUIRE_SCOPE" = true ]; }; then
+	warn "scopes and require_scope are ignored when custom_regex is set"
+fi
+
 debug "regex=$REGEX ignore_regex=$IGNORE_REGEX"
 
 # --- 📊 State ---------------------------------------------------------------
@@ -281,11 +314,20 @@ SUMMARY_ROWS=()
 INVALID_LABELS=()
 INVALID_MSGS=()
 INVALID_REASONS=()
+SKIPPED_MSGS=()
 
 emit_outputs() { # <failed> <skipped>
+	if [ "$1" = true ]; then
+		write_output result failed
+	elif [ "$2" = true ]; then
+		write_output result skipped
+	else
+		write_output result passed
+	fi
 	write_output valid_count "$VALID"
 	write_output invalid_count "$INVALID"
 	write_output skipped_count "$SKIPPED"
+	write_output checked_count "$((VALID + INVALID))"
 	write_output failed "$1"
 	write_output skipped "$2"
 	write_output skip_reason "$SKIP_REASON"
@@ -331,12 +373,29 @@ emit_summary() {
 				echo "_…and $rest more in the step log._"
 			fi
 		fi
+		if [ ${#SKIPPED_MSGS[@]} -gt 0 ]; then
+			echo
+			echo "| Skipped message |"
+			echo "| --- |"
+			for i in "${!SKIPPED_MSGS[@]}"; do
+				if [ "$i" -ge 50 ]; then
+					break
+				fi
+				# shellcheck disable=SC2016 # backticks are Markdown, not a command
+				printf '| `%s` |\n' "$(md_cell "${SKIPPED_MSGS[$i]}")"
+			done
+			rest=$((${#SKIPPED_MSGS[@]} - 50))
+			if [ "$rest" -gt 0 ]; then
+				echo
+				echo "_…and $rest more in the step log._"
+			fi
+		fi
 	} >>"$GITHUB_STEP_SUMMARY"
 }
 
 skip_run() { # <reason>
 	SKIP_REASON=$1
-	SUMMARY_ROWS+=("| Overall | ⏭️ | $1 |")
+	SUMMARY_ROWS+=("| Overall | ⏭️ | $(md_cell "$1") |")
 	notice "Skipping lint: $1"
 	emit_outputs false true
 	emit_summary
@@ -357,11 +416,30 @@ fi
 if [ "$MAX_SUBJECT_LENGTH" -gt 0 ]; then
 	printf '📏 Max subject length: %d\n' "$MAX_SUBJECT_LENGTH"
 fi
+if [ "$DESCRIPTION_CASE" != any ]; then
+	printf '🔠 Description case: %s\n' "$DESCRIPTION_CASE"
+fi
+if [ -n "$IGNORE_BRANCHES" ]; then
+	printf '🌿 Skip branches: %s\n' "$IGNORE_BRANCHES"
+fi
+if [ "$CHECK_PR_TITLE" = false ]; then
+	echo "🙈 PR title: not checked"
+fi
 
 # --- ⏭️ Skip rules -----------------------------------------------------------
 
 if [ "$IGNORE_DRAFTS" = true ] && [ "$IS_DRAFT" = true ]; then
 	skip_run "draft pull request"
+fi
+
+if [ -n "$IGNORE_BRANCHES" ] && [ -n "$BRANCH" ]; then
+	split_list "$IGNORE_BRANCHES"
+	for pattern in "${ITEMS[@]+"${ITEMS[@]}"}"; do
+		# shellcheck disable=SC2053 # branch patterns are globs on purpose
+		if [[ $BRANCH == $pattern ]]; then
+			skip_run "branch '$BRANCH' matches '$pattern'"
+		fi
+	done
 fi
 
 if [ "$IGNORE_BOTS" = true ] && [ -n "$ACTOR" ]; then
@@ -413,17 +491,20 @@ if [ -n "$COMMIT_MESSAGES" ]; then
 			MESSAGES+=("$line")
 		fi
 	done <<<"$COMMIT_MESSAGES"
-elif [ -n "$BASE_SHA" ] || [ -n "$HEAD_SHA" ]; then
-	if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
-		error "base_sha and head_sha must be set together"
-	fi
+fi
+
+# commit_messages wins when it has content. A blank list falls back to the range.
+if [ ${#MESSAGES[@]} -eq 0 ] && [ -n "$BASE_SHA" ]; then
 	collect_commits
 	if [ ${#MESSAGES[@]} -eq 0 ]; then
 		warn "no commits found between base_sha and head_sha"
 	fi
 fi
 
-if [ -z "$PR_TITLE" ] && [ ${#MESSAGES[@]} -eq 0 ]; then
+if [ ${#MESSAGES[@]} -eq 0 ] && { [ "$CHECK_PR_TITLE" = false ] || [ -z "$PR_TITLE" ]; }; then
+	if [ "$ALLOW_EMPTY" = true ]; then
+		skip_run "nothing to lint (allow_empty is on)"
+	fi
 	error "nothing to lint: set pr_title, commit_messages, or base_sha + head_sha"
 fi
 
@@ -467,6 +548,31 @@ subject_problem() {
 		printf 'subject is %d characters, max is %d' "${#subject}" "$MAX_SUBJECT_LENGTH"
 		return 0
 	fi
+	if [ "$DESCRIPTION_CASE" != any ]; then
+		case $subject in
+		*": "*) ;;
+		*)
+			# No ": " delimiter, so custom_regex owns the format.
+			return 1
+			;;
+		esac
+		local first want
+		first=${subject#*: }
+		first=${first:0:1}
+		case $first in
+		[A-Za-z]) ;;
+		*) return 1 ;; # non-ASCII letters are left alone
+		esac
+		if [ "$DESCRIPTION_CASE" = lower ]; then
+			want=$(printf '%s' "$first" | tr '[:upper:]' '[:lower:]')
+		else
+			want=$(printf '%s' "$first" | tr '[:lower:]' '[:upper:]')
+		fi
+		if [ "$first" != "$want" ]; then
+			printf 'description must start with a %s-case letter (got %s)' "$DESCRIPTION_CASE" "$first"
+			return 0
+		fi
+	fi
 	return 1
 }
 
@@ -485,30 +591,30 @@ check_message() { # <label> <subject>
 	fi
 }
 
-check_commit() {
-	local subject
-	subject=${1%%$'\n'*}
-	subject=$(strip_cr "$subject")
+check_subject() { # <label> <subject>
+	local label=$1 subject
+	subject=$(strip_cr "${2%%$'\n'*}")
 	if [ -n "$IGNORE_REGEX" ] && [[ $subject =~ $IGNORE_REGEX ]]; then
 		SKIPPED=$((SKIPPED + 1))
-		printf '⏭️  Skipped commit: "%s"\n' "$subject"
+		SKIPPED_MSGS+=("$subject")
+		printf '⏭️  Skipped %s: "%s"\n' "$label" "$subject"
 		return 0
 	fi
-	check_message "Commit" "$subject"
+	check_message "$label" "$subject"
 }
 
 # --- 🚀 Run -----------------------------------------------------------------
 
-if [ -n "$PR_TITLE" ]; then
+if [ "$CHECK_PR_TITLE" = true ] && [ -n "$PR_TITLE" ]; then
 	echo
-	check_message "PR Title" "$PR_TITLE"
+	check_subject "PR Title" "$PR_TITLE"
 fi
 
 if [ ${#MESSAGES[@]} -gt 0 ]; then
 	echo
 	echo "::group::📝 Checking ${#MESSAGES[@]} commit message(s)"
 	for message in "${MESSAGES[@]}"; do
-		check_commit "$message"
+		check_subject "Commit" "$message"
 	done
 	echo "::endgroup::"
 fi
